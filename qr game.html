@@ -1,0 +1,230 @@
+<!DOCTYPE html>
+<html lang="ko"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no">
+<title>ROYAL TABLE 3D — First Person Hold'em</title>
+<style>
+*{box-sizing:border-box}body{margin:0;background:#050806;color:#f4eddf;font-family:'Noto Sans KR',sans-serif;overflow:hidden;touch-action:none}
+canvas{position:fixed;inset:0;display:block;touch-action:none}
+.lb{position:fixed;z-index:4;transform:translate(-50%,-100%);text-align:center;pointer-events:none;font-size:11px;text-shadow:0 1px 4px #000;white-space:nowrap;line-height:1.35}
+.lb b{color:#f5dfa7}.lb i{font-style:normal;color:#8fd6b5;font-size:10px}.lb .ac{color:#ffe4a1}.lb.out{opacity:.4}
+.bb{background:#fff;color:#111;border-radius:10px;padding:3px 9px;margin-bottom:3px;opacity:0;transition:.2s;font-weight:700;display:inline-block}.bb.on{opacity:1}
+#hud{position:fixed;z-index:5;top:0;left:0;right:0;padding:10px 14px;display:flex;justify-content:space-between;align-items:flex-start;background:linear-gradient(#030806d9,transparent);pointer-events:none}
+#hud *{pointer-events:auto}.chip{border:1px solid #d6b76d88;background:#07100dbb;padding:6px 11px;border-radius:30px;color:#f1d99d;font-size:12px;margin-left:6px;display:inline-block}
+#pot{font:700 22px Georgia;color:#fff0c8;text-align:center;text-shadow:0 2px 6px #000}#pot small{display:block;font:11px sans-serif;color:#e7d49e}
+#msg{position:fixed;z-index:5;top:62px;left:50%;transform:translateX(-50%);background:#07110edb;border:1px solid #c7a45b66;padding:7px 16px;border-radius:30px;font-size:12px;color:#f4dfa9;white-space:nowrap;pointer-events:none}
+#hand{position:fixed;z-index:5;bottom:128px;left:50%;transform:translateX(-50%);font-size:12px;color:#f4dfa9;text-shadow:0 2px 5px #000;pointer-events:none}
+#bot{position:fixed;z-index:6;bottom:0;left:0;right:0;padding:10px 12px max(12px,env(safe-area-inset-bottom));background:linear-gradient(transparent,#030806ed 20%);display:flex;flex-direction:column;align-items:center;gap:8px}
+#bot.off{visibility:hidden}.rr{display:flex;gap:8px;align-items:center;font-size:11px;width:min(440px,95%)}.rr input{flex:1;accent-color:#d9b66d}
+.ac2{display:flex;gap:7px;width:min(640px,100%)}
+button{font:700 13px 'Noto Sans KR',sans-serif;border-radius:9px;border:1px solid #c9a45c99;padding:12px 6px;flex:1;color:#f8f0e2;background:linear-gradient(#35483c,#17251e);cursor:pointer}
+.gold{background:linear-gradient(#f0d38c,#ae8138);color:#21190c}.red{background:linear-gradient(#78453d,#3d201c)}
+.ov{position:fixed;z-index:20;inset:0;background:#020705d9;display:flex;align-items:center;justify-content:center;padding:20px}.hide{display:none!important}
+.modal{width:min(440px,100%);padding:28px 24px;text-align:center;border:1px solid #c7a45b99;border-radius:18px;background:linear-gradient(145deg,#263b30,#0a120e)}
+.modal h1{font:800 27px Georgia,serif;letter-spacing:2px;color:#f5dfa7;margin:0 0 8px}.modal p{font-size:13px;line-height:1.8;color:#d1d5c9}.modal button{width:100%;margin-top:8px}
+</style></head><body>
+<div id="hud"><div class="chip" style="margin:0">♛ ROYAL TABLE · <span id="hn">HAND #0</span></div><div><span class="chip" id="my">내 칩 2,000</span><button class="chip" id="mu" style="flex:none;padding:6px 11px">🔊</button></div></div>
+<div id="pot" style="position:fixed;z-index:5;top:96px;left:50%;transform:translateX(-50%);pointer-events:none"></div>
+<div id="msg">게임을 시작하세요</div>
+<div id="hand"></div>
+<div id="bot" class="off"><div class="rr">레이즈 <input id="sl" type="range"><span id="sv"></span></div>
+<div class="ac2"><button class="red" id="fo">폴드</button><button id="ck">체크</button><button class="gold" id="rz">레이즈</button><button id="al">올인</button></div></div>
+<div class="ov" id="st"><div class="modal"><h1>ROYAL TABLE</h1><p>테이블에 직접 앉아 AI 5명과 대결하는 1인칭 텍사스 홀덤.<br>드래그(마우스·터치)로 시선을 돌려 보세요.<br><b>가상 칩만 사용하는 연습용 게임입니다.</b></p><button class="gold" onclick="begin()">의자에 앉기 · 게임 시작</button></div></div>
+<div class="ov hide" id="rs"><div class="modal"><h1 id="rt"></h1><p id="rp"></p><button class="gold" id="rn">다음 핸드</button></div></div>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+<script>
+const $=id=>document.getElementById(id),R=Math.random,PI=Math.PI,fmt=n=>Math.floor(n).toLocaleString('ko-KR'),sleep=ms=>new Promise(r=>setTimeout(r,ms));
+/* ---------- tween ---------- */
+let tws=[];const tw=(d,f)=>new Promise(r=>tws.push({t:0,d,f,r}));
+function updTw(dt){tws=tws.filter(o=>{o.t+=dt;let k=Math.min(1,o.t/o.d);o.f(k<.5?2*k*k:1-Math.pow(-2*k+2,2)/2);if(k>=1){o.r();return false}return true})}
+/* ---------- audio ---------- */
+let AC,master,mute=false;
+function aud(){if(!AC){AC=new(window.AudioContext||webkitAudioContext)();master=AC.createGain();master.gain.value=.5;master.connect(AC.destination)}AC.resume()}
+function noise(d,f,q,v,ty='bandpass'){if(!AC||mute)return;let b=AC.createBuffer(1,AC.sampleRate*d,AC.sampleRate),x=b.getChannelData(0);for(let i=0;i<x.length;i++)x[i]=(R()*2-1)*(1-i/x.length);let s=AC.createBufferSource();s.buffer=b;let fl=AC.createBiquadFilter();fl.type=ty;fl.frequency.value=f;fl.Q.value=q;let g=AC.createGain();g.gain.value=v;s.connect(fl);fl.connect(g);g.connect(master);s.start()}
+function tone(f,t0,d,v,ty='triangle'){if(!AC||mute)return;let o=AC.createOscillator(),g=AC.createGain(),t=AC.currentTime+t0;o.type=ty;o.frequency.value=f;g.gain.setValueAtTime(v,t);g.gain.exponentialRampToValueAtTime(.001,t+d);o.connect(g);g.connect(master);o.start(t);o.stop(t+d)}
+const sfx={chip(){for(let i=0;i<3;i++)setTimeout(()=>noise(.05,3500+R()*2000,8,.5),i*50)},card(){noise(.12,2200,1.2,.4)},flip(){noise(.07,3000,2,.3)},knock(){tone(110,0,.12,.5,'sine');noise(.05,500,2,.4)},win(){[523,659,784,1047].forEach((f,i)=>tone(f,i*.12,.4,.25))},lose(){[330,277,233].forEach((f,i)=>tone(f,i*.2,.5,.2,'sawtooth'))}};
+function bgm(){const ch=[[220,277,330,415],[196,247,294,370],[174,220,262,330],[196,247,294,392]];let n=0;setInterval(()=>{if(mute||!AC)return;ch[n%4].forEach(f=>tone(f,0,2.6,.035,'sine'));tone(ch[n%4][0]/2,0,.5,.12,'sine');tone(ch[n%4][2]/2,1.2,.5,.1,'sine');noise(1.6,500,.5,.05,'lowpass');n++},2400)}
+const LN={fold:['이번엔 접죠','패스할게요','포기합니다'],check:['체크','통과','체크할게요'],call:['콜','따라갑니다','받죠'],raise:['레이즈!','판을 키우죠','올려볼까요?'],allin:['올인!','전부 걸죠!'],win:['하하, 제가 이겼네요','좋아요!','감사합니다'],lose:['아쉽네요','다음엔 이깁니다','운이 없네요'],think:['음…','어디 보자']};
+function speak(t,s){if(mute||!window.speechSynthesis)return;speechSynthesis.cancel();let u=new SpeechSynthesisUtterance(t);u.lang='ko-KR';u.pitch=s.pitch;u.rate=s.rate;u.volume=.9;speechSynthesis.speak(u)}
+/* ---------- three setup ---------- */
+const RX=4.4,RZ=2.7,YT=1.58,POT=new THREE.Vector3(0,YT,.95),S=new THREE.Vector3(1.6,1.62,3),REST=new THREE.Vector3(.55,1.66,3.2);
+const M=(c,r=.6,m=0)=>new THREE.MeshStandardMaterial({color:c,roughness:r,metalness:m});
+const scene=new THREE.Scene(),camera=new THREE.PerspectiveCamera(58,1,.1,100),renderer=new THREE.WebGLRenderer({antialias:true});
+renderer.setPixelRatio(Math.min(devicePixelRatio,1.8));document.body.prepend(renderer.domElement);
+scene.background=new THREE.Color(0x08110d);scene.fog=new THREE.Fog(0x08110d,12,30);
+scene.add(new THREE.HemisphereLight(0xb6d6c5,0x24160d,1.1));
+let key=new THREE.SpotLight(0xffe1ad,2.2,25,PI/4,.5,1);key.position.set(-2,9,5);scene.add(key);
+for(let i=0;i<3;i++){let l=new THREE.PointLight(0xffbd6e,1,9);l.position.set((i-1)*3,5,-1);scene.add(l);let b=new THREE.Mesh(new THREE.SphereGeometry(.12,12,8),new THREE.MeshBasicMaterial({color:0xffd49a}));b.position.copy(l.position);scene.add(b)}
+let fl=new THREE.Mesh(new THREE.PlaneGeometry(40,40),M(0x1a1410,.95));fl.rotation.x=-PI/2;scene.add(fl);
+for(let i=0;i<9;i++){let w=new THREE.Mesh(new THREE.BoxGeometry(1.5,4,.2),M(i%2?0x3a1f1c:0x1b2922));w.position.set((i-4)*1.9,2,-9);scene.add(w)}
+function cyl(r,h,m,sx,sz,y){let c=new THREE.Mesh(new THREE.CylinderGeometry(1,1,h,64),m);c.scale.set(r*sx,1,r*sz);c.position.y=y;scene.add(c)}
+cyl(1,1,M(0x21140c,.4),RX*.8,RZ*.8,.9);cyl(1,.22,M(0x6b421e,.3,.15),RX+.45,RZ+.45,1.44);cyl(1,.05,M(0x07533c,.96),RX,RZ,1.53);
+/* cards */
+const tc={};
+function ctex(c){let k=c?c.r+c.s:'b';if(tc[k])return tc[k];let cv=document.createElement('canvas');cv.width=128;cv.height=180;let x=cv.getContext('2d');x.textAlign='center';
+ if(!c){x.fillStyle='#183c68';x.fillRect(0,0,128,180);x.strokeStyle='#e1c98e';x.lineWidth=6;x.strokeRect(8,8,112,164);x.fillStyle='#e1c98e';x.font='56px serif';x.fillText('♛',64,108)}
+ else{x.fillStyle='#fffdf6';x.fillRect(0,0,128,180);x.fillStyle=/[♥♦]/.test(c.s)?'#c32635':'#111';x.font='bold 46px Georgia';x.fillText(c.r,64,56);x.font='64px serif';x.fillText(c.s,64,126)}
+ return tc[k]=new THREE.CanvasTexture(cv)}
+const cg=new THREE.BoxGeometry(.44,.012,.62),side=M(0xeeeeee);
+function mkCard(c,pos){let m=new THREE.Mesh(cg,[side,side,new THREE.MeshBasicMaterial({map:ctex(c)}),new THREE.MeshBasicMaterial({map:ctex(null)}),side,side]);m.rotation.order='YXZ';m.rotation.x=PI;m.position.copy(pos);scene.add(m);return m}
+function fly(o,to,d=.45,arc=.6,ry=null){let a=o.position.clone(),r0=o.rotation.y;return tw(d,k=>{o.position.lerpVectors(a,to,k);o.position.y+=Math.sin(k*PI)*arc;if(ry!=null)o.rotation.y=r0+(ry-r0)*k})}
+function flip(m,up){let y=m.position.y,a=m.rotation.x,b=up?(Math.abs(m.rotation.y)<.01?.55:0):PI;sfx.flip();return tw(.4,k=>{m.rotation.x=a+(b-a)*k;m.position.y=y+Math.sin(k*PI)*.3})}
+/* characters */
+const ST=[{n:'강철수',tag:'신중형',tight:.62,agg:.2,bl:.03,skin:0xc58c69,hair:0x29201b,hs:2,shirt:0x3b3430,acc:'beard',pitch:.6,rate:.9},
+{n:'윤서연',tag:'균형형',tight:.5,agg:.4,bl:.08,skin:0xf0c8a8,hair:0x34251f,hs:1,shirt:0x8a3b4a,acc:'ear',pitch:1.4,rate:1.05},
+{n:'마이클',tag:'루즈 블러퍼',tight:.3,agg:.5,bl:.3,skin:0x8b5b42,hair:0x1a1a1a,hs:3,shirt:0x314c5d,acc:'glass',pitch:.9,rate:1.1},
+{n:'다니엘',tag:'공격형',tight:.45,agg:.85,bl:.15,skin:0x6d4a38,hair:0x211c18,hs:0,shirt:0x1c1c1c,acc:'tie',pitch:.75,rate:1},
+{n:'김하늘',tag:'타이트 공격형',tight:.58,agg:.65,bl:.1,skin:0xe6bd9b,hair:0x4b3829,hs:4,shirt:0x5a4c68,acc:'glass',pitch:1.2,rate:1.15}];
+const DL={n:'딜러',skin:0xd8a888,hair:0x222222,hs:0,shirt:0xeeeeee,acc:'tie'};
+const IDLE=[-.9,-.6],CHIN=[-1.2,-1.7],PUSH=[-1.4,-.1],UP=[-2.8,-.2],DOWN=[-.1,-.2],LOOK=[-1.0,-1.2];
+function mkChar(s){let g=new THREE.Group(),sh=M(s.shirt),sk=M(s.skin,.7),hm=M(s.hair);
+ let t=new THREE.Mesh(new THREE.CylinderGeometry(.38,.46,.95,20),sh);t.position.y=.1;g.add(t);
+ let head=new THREE.Group();head.position.y=1.05;g.add(head);
+ let h=new THREE.Mesh(new THREE.SphereGeometry(.33,24,18),sk);h.scale.set(.88,1.1,.92);head.add(h);
+ for(let e of[-1,1]){let ey=new THREE.Mesh(new THREE.SphereGeometry(.04,8,8),M(0x111));ey.position.set(e*.11,.07,.28);head.add(ey)}
+ let mouth=new THREE.Mesh(new THREE.TorusGeometry(.07,.014,6,12,PI),M(0x7a2b2b));mouth.position.set(0,-.12,.28);mouth.rotation.z=PI;mouth.scale.set(1,.15,1);head.add(mouth);
+ if(s.hs!==2){let c=new THREE.Mesh(new THREE.SphereGeometry(.345,20,14,0,PI*2,0,PI*.5),s.hs===3?M(0xb22222):hm);c.position.y=.04;c.scale.set(.88,1.1,.95);head.add(c)}
+ if(s.hs===1){let l=new THREE.Mesh(new THREE.BoxGeometry(.6,.6,.12),hm);l.position.set(0,-.1,-.2);head.add(l)}
+ if(s.hs===3){let b=new THREE.Mesh(new THREE.BoxGeometry(.5,.03,.3),M(0xb22222));b.position.set(0,.1,.3);head.add(b)}
+ if(s.hs===4){let b=new THREE.Mesh(new THREE.SphereGeometry(.12,10,8),hm);b.position.set(0,.42,-.1);head.add(b)}
+ if(s.acc==='beard'){let b=new THREE.Mesh(new THREE.SphereGeometry(.3,16,10,0,PI*2,PI*.55,PI*.45),hm);b.position.set(0,-.05,.04);head.add(b)}
+ if(s.acc==='glass')for(let e of[-1,1]){let r=new THREE.Mesh(new THREE.TorusGeometry(.07,.012,6,14),M(0xcaa24e,.3,.6));r.position.set(e*.11,.07,.3);head.add(r)}
+ if(s.acc==='ear')for(let e of[-1,1]){let r=new THREE.Mesh(new THREE.SphereGeometry(.04,8,8),M(0xffd700,.2,.8));r.position.set(e*.3,-.08,0);head.add(r)}
+ if(s.acc==='tie'){let r=new THREE.Mesh(new THREE.BoxGeometry(.1,.4,.05),M(0xb22222));r.position.set(0,.2,.4);g.add(r)}
+ let arms=[1,-1].map(d=>{let sp=new THREE.Group();sp.position.set(d*.46,.5,0);g.add(sp);let u=new THREE.Mesh(new THREE.CylinderGeometry(.09,.08,.4,10),sh);u.position.y=-.2;sp.add(u);
+  let el=new THREE.Group();el.position.y=-.4;sp.add(el);let f=new THREE.Mesh(new THREE.CylinderGeometry(.075,.065,.45,10),sh);f.position.y=-.225;el.add(f);
+  let hd=new THREE.Mesh(new THREE.SphereGeometry(.085,10,8),sk);hd.position.y=-.47;el.add(hd);sp.rotation.x=IDLE[0];el.rotation.x=IDLE[1];return{sp,el}});
+ g.userData={head,mouth,arms};scene.add(g);return g}
+function pose(g,r,l,d=.35){let s=[r,l||r];return Promise.all(g.userData.arms.map((a,i)=>{let a0=a.sp.rotation.x,e0=a.el.rotation.x,t=s[i];return tw(d,k=>{a.sp.rotation.x=a0+(t[0]-a0)*k;a.el.rotation.x=e0+(t[1]-e0)*k})}))}
+function poseR(g,r,d=.35){let a=g.userData.arms[0],a0=a.sp.rotation.x,e0=a.el.rotation.x;return tw(d,k=>{a.sp.rotation.x=a0+(r[0]-a0)*k;a.el.rotation.x=e0+(r[1]-e0)*k})}
+function mood(p,m){let mo=p.g.userData.mouth;mo.rotation.z=m==='s'?0:PI;mo.scale.set(m==='h'?1.5:1,m==='n'||m==='t'?.15:1.2,1)}
+function headTo(p,rx,rz=0){let h=p.g.userData.head,a=h.rotation.x,b=h.rotation.z;return tw(.3,k=>{h.rotation.x=a+(rx-a)*k;h.rotation.z=b+(rz-b)*k})}
+function sp(th,k){let a=th*PI/180;return new THREE.Vector3(Math.cos(a)*RX*k,0,-Math.sin(a)*RZ*k)}
+const dealer=mkChar(DL);dealer.position.set(0,1.15,-3.7);dealer.rotation.y=PI;
+const TH=[205,160,125,55,20];
+const P=[{i:0,name:'나',stack:2000,th:270},...ST.map((s,i)=>({i:i+1,name:s.n,st:s,stack:2000,th:TH[i]}))];
+P.forEach(p=>{p.chipP=sp(p.th,.85).setY(YT);if(!p.i){p.chipP=S.clone();return}
+ let s=sp(p.th,1.22);p.g=mkChar(p.st);p.g.position.set(s.x,1.15,s.z);p.ry=Math.atan2(-s.x,-s.z);p.g.rotation.y=p.ry;
+ for(let k=0;k<4;k++){let c=new THREE.Mesh(new THREE.CylinderGeometry(.16,.16,.055,20),M(0xc79b4d,.35,.2));c.position.copy(p.chipP);c.position.y=1.58+k*.058;scene.add(c)}
+ p.lb=document.createElement('div');p.lb.className='lb';p.lb.innerHTML=`<div class="bb"></div><br><b>${p.name}</b> <i>${p.st.tag}</i><br><span class="st"></span> <span class="ac"></span>`;document.body.appendChild(p.lb)});
+for(let k=0;k<6;k++){let c=new THREE.Mesh(new THREE.CylinderGeometry(.16,.16,.055,20),M([0xb23c35,0xc9c5b8][k%2],.35,.2));c.position.set(S.x,1.58+(k>>1)*.058,S.z+(k%2)*.34);scene.add(c)}
+let puck=new THREE.Mesh(new THREE.CylinderGeometry(.14,.14,.03,20),M(0xffffff));scene.add(puck);
+/* player arms */
+const rh=new THREE.Mesh(new THREE.SphereGeometry(.14,16,12),M(0xb98460,.7)),lh=rh.clone();rh.position.copy(REST);lh.position.set(-.55,1.66,3.2);scene.add(rh,lh);
+const arms=[[rh,1],[lh,-1]].map(([h,d])=>{let g=new THREE.BoxGeometry(.3,.3,1);g.translate(0,0,.5);let m=new THREE.Mesh(g,M(0x1c2924));m.userData={h,sh:new THREE.Vector3(d*.8,2.3,5.4)};scene.add(m);return m});
+const hMove=(to,d=.35)=>{let a=rh.position.clone();return tw(d,k=>rh.position.lerpVectors(a,to,k))};
+/* camera control */
+let yaw=0,pit=-.32,drag=null,cp=new THREE.Vector3(0,2.7,4.8);
+const cv=renderer.domElement;
+cv.addEventListener('pointerdown',e=>{drag=[e.clientX,e.clientY];cv.setPointerCapture(e.pointerId)});
+cv.addEventListener('pointermove',e=>{if(!drag)return;yaw=Math.max(-1,Math.min(1,yaw-(e.clientX-drag[0])*.004));pit=Math.max(-.55,Math.min(.1,pit-(e.clientY-drag[1])*.003));drag=[e.clientX,e.clientY]});
+cv.addEventListener('pointerup',()=>drag=null);
+function resize(){camera.aspect=innerWidth/innerHeight;camera.fov=camera.aspect<1?78:58;camera.updateProjectionMatrix();renderer.setSize(innerWidth,innerHeight)}
+addEventListener('resize',resize);resize();
+const clk=new THREE.Clock(),v3=new THREE.Vector3();
+function loop(){requestAnimationFrame(loop);let dt=Math.min(.05,clk.getDelta()),t=clk.elapsedTime;updTw(dt);
+ camera.position.set(0,cp.y+Math.sin(t)*.01,cp.z);camera.lookAt(camera.position.x+Math.sin(yaw)*Math.cos(pit),camera.position.y+Math.sin(pit),camera.position.z-Math.cos(yaw)*Math.cos(pit));
+ arms.forEach(a=>{a.position.copy(a.userData.sh);a.lookAt(a.userData.h.position);a.scale.z=a.position.distanceTo(a.userData.h.position)});
+ P.forEach(p=>{if(!p.lb)return;v3.set(0,1.95,0).add(p.g.position);v3.project(camera);let ok=v3.z<1;p.lb.style.display=ok?'':'none';p.lb.style.left=(v3.x+1)/2*innerWidth+'px';p.lb.style.top=(1-v3.y)/2*innerHeight+'px'});
+ renderer.render(scene,camera)}loop();
+/* ---------- poker logic ---------- */
+const SU=['♠','♥','♦','♣'],RK=['2','3','4','5','6','7','8','9','10','J','Q','K','A'];
+const rv=r=>r==='A'?14:r==='K'?13:r==='Q'?12:r==='J'?11:+r;
+function newDeck(){let d=SU.flatMap(s=>RK.map(r=>({r,s,v:rv(r)})));for(let i=51;i>0;i--){let j=Math.floor(R()*(i+1));[d[i],d[j]]=[d[j],d[i]]}return d}
+function combos(a,k){let o=[];(function f(i,c){if(c.length===k){o.push(c);return}for(let j=i;j<a.length;j++)f(j+1,c.concat(a[j]))})(0,[]);return o}
+function eval5(cs){let vs=cs.map(c=>c.v).sort((a,b)=>b-a),ct={};cs.forEach(c=>ct[c.v]=(ct[c.v]||0)+1);let g=Object.entries(ct).map(([v,n])=>({v:+v,n})).sort((a,b)=>b.n-a.n||b.v-a.v),fl=cs.every(c=>c.s===cs[0].s),u=[...new Set(vs)],st=u.length===5&&u[0]-u[4]===4?u[0]:u.join()==='14,5,4,3,2'?5:0;
+ if(fl&&st)return[8,[st],'스트레이트 플러시'];if(g[0].n===4)return[7,[g[0].v,g[1].v],'포카드'];if(g[0].n===3&&g[1].n===2)return[6,[g[0].v,g[1].v],'풀하우스'];if(fl)return[5,vs,'플러시'];if(st)return[4,[st],'스트레이트'];
+ if(g[0].n===3)return[3,[g[0].v,...g.slice(1).map(x=>x.v)],'트리플'];if(g[0].n===2&&g[1].n===2)return[2,[g[0].v,g[1].v,g[2].v],'투 페어'];if(g[0].n===2)return[1,[g[0].v,...g.slice(1).map(x=>x.v)],'원 페어'];return[0,vs,'하이 카드']}
+function cmp(a,b){if(a[0]!==b[0])return a[0]-b[0];for(let i=0;i<5;i++)if((a[1][i]||0)!==(b[1][i]||0))return(a[1][i]||0)-(b[1][i]||0);return 0}
+function evaluate(cs){let best=null;for(let c of combos(cs,5)){let e=eval5(c);if(!best||cmp(e,best)>0)best=e}return best}
+let deck,board=[],bm=[],pot=0,cur=0,minR=20,btn=0,potChips=[],resolveNext,going=false;
+const live=()=>P.filter(p=>!p.fold),nx=i=>(i+1)%6;
+function upd(){$('pot').innerHTML=`<small>POT</small>${fmt(pot)}`;$('my').textContent='내 칩 '+fmt(P[0].stack);
+ P.forEach(p=>{if(!p.lb)return;p.lb.querySelector('.st').textContent=fmt(p.stack)+' 칩';p.lb.querySelector('.ac').textContent=p.act||'';p.lb.classList.toggle('out',!!p.fold)});
+ $('hand').textContent=P[0].cards&&P[0].cards.length&&board.length>=3?evaluate(P[0].cards.concat(board))[2]:''}
+const msg=t=>$('msg').textContent=t;
+function bubble(p,t){let b=p.lb.querySelector('.bb');b.textContent=t;b.classList.add('on');clearTimeout(p.bt);p.bt=setTimeout(()=>b.classList.remove('on'),1800)}
+function say(p,k){let t=LN[k][Math.floor(R()*LN[k].length)];bubble(p,t);speak(t,p.st)}
+function ranked(c){let a=c[0].v,b=c[1].v,hi=Math.max(a,b),lo=Math.min(a,b);return Math.min(1,a===b?.5+hi/28:hi/30+lo/50+(c[0].s===c[1].s?.06:0)+(hi>=12&&lo>=10?.12:0)+(hi-lo<=2?.03:0))}
+function equity(p,n=110){let used=new Set(p.cards.concat(board).map(c=>c.r+c.s)),rest=newDeck().filter(c=>!used.has(c.r+c.s)),opp=Math.min(3,live().length-1),k=5-board.length,w=0;
+ for(let s=0;s<n;s++){for(let i=rest.length-1;i>rest.length-14;i--){let j=Math.floor(R()*(i+1));[rest[i],rest[j]]=[rest[j],rest[i]]}
+  let q=rest.slice(-13),bd=board.concat(q.slice(0,k)),me=evaluate(p.cards.concat(bd)),win=1;
+  for(let o=0;o<opp;o++){let e=evaluate([q[k+o*2],q[k+o*2+1]].concat(bd)),c=cmp(e,me);if(c>0){win=0;break}if(c===0)win=.5}
+  w+=win}return w/n}
+/* GTO-inspired AI: position-based ranges, equity vs pot odds (MDF), balanced bluff ratio b/(1+2b); personality only shifts frequencies */
+function decide(p){let st=p.st,call=Math.min(cur-p.bet,p.stack),can=p.stack+p.bet,pos=(p.i-btn+6)%6,tl=(st.tight-.5)*.2,ag=st.agg;
+ const rz=f=>{let to=cur+Math.max(minR,Math.round(Math.max(pot,20)*f/10)*10);if(to>=can*.65)to=can;return{t:'raise',to:Math.min(to,can)}};
+ if(board.length<3){let h=ranked(p.cards),thr=[.36,.40,.52,.50,.46,.42][pos]+tl; // BTN,SB,BB,UTG,HJ,CO
+  if(cur<=20){if(call===0)return h>thr+.12&&R()<.5+ag*.4?{t:'raise',to:Math.min(can,60)}:{t:'check'};
+   if(h>thr||(h>thr-.07&&R()<.25+ag*.2))return{t:'raise',to:Math.min(can,50+(pot>40?20:0))};return call<=10&&h>.3?{t:'call'}:{t:'fold'}}
+  let od=call/(pot+call);if(h>.76&&can>cur&&R()<.85)return{t:'raise',to:Math.min(can,cur*3+10)};
+  if(h>.45&&h<.62&&R()<.08+ag*.08&&cur<=70&&can>cur)return{t:'raise',to:Math.min(can,cur*3)}; // light 3-bet bluff
+  if(h>thr+.1+od*.5-(pos===2?.08:0))return{t:'call'};return{t:'fold'}}
+ let eq=equity(p),od=call/(pot+call||1);
+ if(call===0){let big=eq>.68&&R()<.8,thin=eq>.42&&eq<=.68&&R()<.3+ag*.2,bl=eq>.12&&eq<.4&&R()<.12+ag*.14;
+  if(big)return rz(eq>.85?1:.66);if(thin)return rz(.33);if(bl)return rz(.66);return{t:'check'}}
+ if(eq>.82&&R()<.6&&can>cur)return rz(.8);
+ if(eq>.2&&eq<.35&&R()<.05+ag*.06&&can>cur&&call<pot*.7)return rz(.7);
+ if(eq>=od+.04+tl*.5||(od<.2&&R()<.1))return{t:'call'};return{t:'fold'}}
+function humanAct(){return new Promise(res=>{let p=P[0],call=Math.min(cur-p.bet,p.stack),can=p.stack+p.bet,mt=Math.min(can,cur+minR),sl=$('sl');
+ $('bot').classList.remove('off');$('ck').textContent=call?`콜 ${fmt(call)}`:'체크';sl.min=mt;sl.max=can;sl.step=10;sl.value=mt;$('rz').disabled=$('al').disabled=can<=cur;sl.disabled=mt>=can;
+ const sv=()=>{$('sv').textContent=fmt(sl.value);$('rz').textContent='레이즈 '+fmt(sl.value)};sv();sl.oninput=sv;msg('당신의 차례입니다');
+ const done=a=>{$('bot').classList.add('off');res(a)};
+ $('fo').onclick=()=>done({t:'fold'});$('ck').onclick=()=>done({t:call?'call':'check'});$('rz').onclick=()=>done({t:'raise',to:Math.min(can,+sl.value)});$('al').onclick=()=>done({t:'raise',to:can})})}
+async function aiAct(p){msg(p.name+' 고민 중…');mood(p,'t');let r=Math.random();
+ if(r<.5){headTo(p,.3,.12);await poseR(p.g,CHIN,.4)}else{await Promise.all([headTo(p,.2),poseR(p.g,LOOK,.35)]);let c=p.cm[0];tw(.3,k=>c.rotation.x=PI-Math.sin(k*PI)*.9)}
+ await sleep(500+R()*700);mood(p,'n');headTo(p,0);poseR(p.g,IDLE,.3);return decide(p)}
+async function chips(from,to,n,thr){let arr=[];for(let k=0;k<n;k++){let c=new THREE.Mesh(new THREE.CylinderGeometry(.12,.12,.045,18),M([0xb23c35,0xc9c5b8,0xc79b4d][k%3],.35,.2));c.position.copy(from);scene.add(c);arr.push(c);potChips.push(c)}
+ sfx.chip();await Promise.all(arr.map((c,k)=>sleep(k*55).then(()=>{let e=new THREE.Vector3(to.x+(R()-.5)*1.1,YT+R()*.05,to.z+(R()-.5)*.6);return Promise.all([fly(c,e,thr?.32:.6,thr?.25:.8),tw(thr?.32:.6,q=>{c.rotation.x=thr?q*PI*3:0})])})));sfx.chip()}
+async function muck(p){let cs=p.i?p.cm:P[0].cm,to=p.i?sp(p.th,.4).setY(YT):new THREE.Vector3(0,YT,1.6);if(!p.i)await hMove(new THREE.Vector3(0,1.7,2.3));
+ await Promise.all(cs.map((c,k)=>{flip(c,false);return fly(c,to.clone().add(new THREE.Vector3(k*.1,0,0)),.5,.3)}));await Promise.all(cs.map(c=>tw(.3,k=>c.scale.setScalar(1-k))));cs.forEach(c=>scene.remove(c));if(!p.i)hMove(REST)}
+async function show(p,k,add){let who=!p.i;p.act={fold:'폴드',check:'체크',call:'콜 '+fmt(add),raise:'레이즈 '+fmt(p.bet),allin:'올인 '+fmt(add)}[k];msg((p.name)+': '+p.act);
+ if(!who)say(p,k);
+ if(k==='fold')await muck(p);
+ else if(k==='check'){if(who){await hMove(new THREE.Vector3(REST.x,1.9,REST.z),.15);await hMove(REST,.12)}else await poseR(p.g,[-1.1,-.7],.15);sfx.knock();if(!who)poseR(p.g,IDLE,.2)}
+ else{let thr=k!=='call';if(who){await hMove(S);await hMove(new THREE.Vector3(S.x,1.8,S.z),.2)}else await poseR(p.g,thr?PUSH:[-1.1,-.4],.25);
+  await chips(who?rh.position:p.chipP,POT,k==='call'?3:6,thr);if(who)hMove(REST);else poseR(p.g,IDLE,.3)}
+ upd()}
+async function perform(p,a){let add=0;
+ if(a.t==='fold')p.fold=true;
+ else if(a.t!=='check'){let to=a.t==='raise'?Math.min(a.to,p.stack+p.bet):Math.min(cur,p.stack+p.bet);if(a.t==='raise'&&to<=cur){a.t='call';to=Math.min(cur,p.stack+p.bet)}add=to-p.bet;if(a.t==='raise'){minR=Math.max(minR,to-cur);cur=to}}
+ p.stack-=add;p.bet+=add;p.tot+=add;pot+=add;if(add>0&&p.stack===0)p.allin=true;
+ await show(p,a.t==='raise'&&p.allin?'allin':a.t,add);return a.t==='raise'}
+async function round(first,pre){if(!pre){P.forEach(p=>p.bet=0);cur=0;minR=20;P.forEach(p=>p.act=p.fold?'폴드':'')}
+ let pend=new Set(P.filter(p=>!p.fold&&!p.allin).map(p=>p.i)),i=first;
+ while(pend.size){if(live().length<2)return;let can=P.filter(p=>!p.fold&&!p.allin);if(can.length<2&&can.every(p=>p.bet>=cur))return;
+  if(!pend.has(i)){i=nx(i);continue}let p=P[i];p.act='';p.lb&&p.lb.classList.remove('out');
+  let a=i?await aiAct(p):await humanAct();pend.delete(i);
+  if(await perform(p,a))pend=new Set(P.filter(q=>!q.fold&&!q.allin&&q.i!==i).map(q=>q.i));i=nx(i)}}
+/* dealing */
+async function dealCard(c,pos,ry,up){let m=mkCard(c,new THREE.Vector3(0,2,-3.3));if(!ry)m.scale.setScalar(1.6);sfx.card();pose(dealer,PUSH,IDLE,.12).then(()=>pose(dealer,IDLE,IDLE,.25));await fly(m,pos,.35,.7,ry);if(up)flip(m,true);return m}
+function slot(p,k){if(!p.i)return new THREE.Vector3(-.5+k*1,YT+.02,2.4);let b=sp(p.th,.62).setY(YT);return b.add(new THREE.Vector3(Math.cos(p.ry)*(k?.25:-.25),0,-Math.sin(p.ry)*(k?.25:-.25)))}
+function clearTable(){[].concat(bm,...P.map(p=>p.cm||[])).forEach(m=>scene.remove(m));potChips.forEach(c=>scene.remove(c));bm=[];potChips=[];board=[]}
+async function street(n){for(let k=0;k<n;k++){let c=deck.pop(),m=await dealCard(c,new THREE.Vector3((board.length-2)*.85,YT+.02,-.3),0);board.push(c);bm.push(m)}}
+function awardPots(){let lv=[...new Set(P.filter(p=>p.tot>0).map(p=>p.tot))].sort((a,b)=>a-b),prev=0,out=[];
+ live().forEach(p=>p.ev=live().length>1?evaluate(p.cards.concat(board)):[0,[0],'']);
+ for(let L of lv){let amt=0;P.forEach(p=>amt+=Math.max(0,Math.min(p.tot,L)-prev));prev=L;let el=P.filter(p=>!p.fold&&p.tot>=L);if(!el.length)el=live();
+  let best=el.reduce((b,p)=>cmp(p.ev,b)>0?p.ev:b,el[0].ev),w=el.filter(p=>cmp(p.ev,best)===0),sh=Math.floor(amt/w.length);w.forEach((p,k)=>{p.stack+=sh+(k?0:amt-sh*w.length);out.push([p,sh,L===lv[0]?'메인 팟':'사이드 팟',p.ev[2]])})}
+ return out}
+async function play(){clearTable();hn.textContent='HAND #'+(++window.hnum);
+ P.forEach(p=>{if(p.stack<=0){p.stack=2000;if(!p.i)msg('칩을 재충전했습니다')}p.bet=p.tot=0;p.fold=p.allin=false;p.act='';p.cards=[];p.cm=[];if(p.g){mood(p,'n');pose(p.g,IDLE,IDLE)}});
+ deck=newDeck();pot=0;btn=nx(btn);puck.position.set(...[sp(P[btn].th,.7).x+.4,YT,sp(P[btn].th,.7).z]);upd();
+ let sb=nx(btn),bb=nx(sb);cur=20;minR=20;for(let [i,n] of [[sb,10],[bb,20]]){let p=P[i],a=Math.min(n,p.stack);p.stack-=a;p.bet=p.tot=a;pot+=a;p.act=(i===sb?'SB ':'BB ')+a;if(a===p.stack+a&&!p.stack)p.allin=true;if(!i)chips(S,POT,2,false);}upd();
+ msg('딜러가 카드를 나눠줍니다');
+ for(let r=0;r<2;r++)for(let k=0;k<6;k++){let p=P[(sb+k)%6],c=deck.pop();p.cards.push(c);p.cm.push(await dealCard(c,slot(p,r),p.i?p.ry:0,false));if(!p.i)await sleep(60)}
+ for(let c of P[0].cm)flip(c,true);upd();
+ P.filter(p=>p.i).forEach((p,k)=>sleep(k*250).then(async()=>{await Promise.all([headTo(p,.3),poseR(p.g,LOOK,.3)]);poseR(p.g,IDLE,.4);headTo(p,0)}));await sleep(900);
+ await round(nx(bb),true);
+ for(let n of [3,1,1]){if(live().length<2)break;msg(n===3?'플랍':board.length===3?'턴':'리버');await street(n);for(let m of bm.slice(-n)){flip(m,true);await sleep(150)}upd();if(P.filter(p=>!p.fold&&!p.allin).length>1)await round(nx(btn));await sleep(300)}
+ let L=live();if(L.length>1){msg('쇼다운');for(let p of L.filter(p=>p.i)){p.cm.forEach(c=>{c.position.y=YT;c.scale.setScalar(1.5);flip(c,true)});await sleep(500)}}
+ let res=awardPots(),w=[...new Set(res.map(r=>r[0]))],tot=pot;
+ upd();let wp=w[0].i?w[0].chipP:S;await Promise.all(potChips.map(c=>fly(c,wp.clone().setY(YT),.8,.8)));potChips.forEach(c=>scene.remove(c));potChips=[];pot=0;
+ P.forEach(p=>{if(!p.g)return;if(w.includes(p)){mood(p,'h');pose(p.g,UP,UP,.4);setTimeout(()=>say(p,'win'),200)}else if(!p.fold){mood(p,'s');pose(p.g,DOWN,DOWN,.4);headTo(p,.35)}});
+ let human=w.includes(P[0]);human?sfx.win():sfx.lose();
+ if(!human&&L.includes(P[0])||!human)setTimeout(()=>{let l=L.filter(p=>p.i&&!w.includes(p))[0];l&&say(l,'lose')},1500);
+ upd();await sleep(1200);
+ $('rt').textContent=human?'YOU WIN!':w.map(p=>p.name).join(', ')+' 승리';
+ $('rp').innerHTML=res.map(r=>`${r[0].name} · ${r[2]} ${fmt(r[1])}칩${r[3]?' · '+r[3]:''}`).join('<br>')+`<br><br>총 팟 ${fmt(tot)}`;
+ $('rs').classList.remove('hide');await new Promise(r=>$('rn').onclick=r);$('rs').classList.add('hide')}
+window.hnum=0;const hn=$('hn');
+$('mu').onclick=()=>{mute=!mute;$('mu').textContent=mute?'🔇':'🔊';if(mute&&window.speechSynthesis)speechSynthesis.cancel()};
+async function begin(){$('st').classList.add('hide');aud();bgm();upd();while(1)await play()}
+</script></body></html>
